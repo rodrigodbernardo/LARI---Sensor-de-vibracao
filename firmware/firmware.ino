@@ -3,6 +3,8 @@
 #include <ESP8266WiFiMulti.h>
 #include <ArduinoJson.h>
 //#include "WiFiTask.h"
+#include <iostream>
+//#include <format>
 
 #include "secure.hpp"
 
@@ -30,10 +32,15 @@ const uint8_t ACCEL_SCALE   = 8;              // Escala do acelerômetro
 
 //  VARIÁVEIS DE TEMPORIZAÇÃO
 
-unsigned long long Tp = 0; //prevCheckTime
-unsigned long long Tc; //CurrTime
-unsigned long long T = 0; //Interval
-unsigned long long Ts = 5000;
+uint32_t Tp = 0; //prevCheckTime
+uint32_t Tc; //CurrTime
+uint32_t T = 0; //Interval
+uint32_t Ts = 5000;
+
+uint32_t prevCaptTime = 0; //prevCheckTime
+uint32_t currCaptTime; //CurrTime
+uint32_t captInterval = 0; //Interval
+uint32_t captIntervalMs = 2000;
 
 //  VARIÁVEIS DE ESPECIFICAÇÃO
 
@@ -57,14 +64,17 @@ int result_class = 0;
 
 //  VARIÁVEIS DE ARMAZENAMENTO
 
+unsigned long timestamp;
 int16_t MPU_data[nc][6];
 int16_t MPU_temp[nc];
 double MSD[nc - (2 * w_border)][6];
 
+// CONSTANTES DE TEXTO
+
 //  VARIÁVEIS DIVERSAS
 
 String names[7] = {"AcX:", ",AcY:", ",AcZ:", ",GyX:", ",GyY:", ",GyZ:", ",Tmp:"};
-int cmd;
+int cmd = 3;
 String status;
 bool offlineMode = 0;
 
@@ -77,8 +87,8 @@ void callback(char *topic, byte *payload, unsigned int length)
   deserializeJson(mqtt_input, payload);
 
   cmd   = mqtt_input["cmd"];
-  np    = mqtt_input["npk"];
-  Ts    = mqtt_input["spe"];
+  np    = mqtt_input["np"];
+  Ts    = mqtt_input["Ts"];
 
   status  = "COMANDO RECEBIDO:\n---\nComando: "   ; status += cmd;
   status += "\nPacotes: "                         ; status += np;
@@ -132,21 +142,18 @@ void loop()
 
   if (!offlineMode) {
     if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("\nConexão com a internet não identificada.");
+      Serial.println("Conexão com a internet não identificada.");
       setWifi();
-    } else {
-      mqtt.loop();
-
-      if (mqtt.connected())
-      {
-        mqtt.loop();
-      }else
-      {
-        Serial.println("\nConexão com o Broker MQTT não estabelecida.");
-        setMqtt();
-      }
     }
+    
+    if (!offlineMode && !mqtt.connected())
+    {
+      Serial.println("Conexão com o Broker MQTT não estabelecida.");
+      setMqtt();
+    }
+    
   }
+  mqtt.loop();
   /*
     switch (cmd) {
       case 1:
@@ -162,28 +169,48 @@ void loop()
         break;
     }
   */
-  cmd = 2;
   switch (cmd) {
     case 1:
-    {
-      readRawMPU(1);
-      printMPU();
-      break;
-    }
+      {
+        readRawMPU(1);
+        printMPU();
+        break;
+      }
     case 2:
-    {
-      readRawMPU(nc);
-      featureExtraction();
-      dataClassification();
+      {
+        currCaptTime = millis();
 
-      if (!offlineMode)
-        sendClass();
-      
-      delay(1000);
-      break;
-    }
+        captInterval = currCaptTime - prevCaptTime;
+        if (captInterval >= captIntervalMs)
+        {
+          prevCaptTime = currCaptTime;
+          digitalWrite(D0, LOW);
+
+          readRawMPU(nc);
+          featureExtraction();
+          dataClassification();
+
+          if (!offlineMode)
+            sendClass();
+
+          digitalWrite(D0, HIGH);
+        }
+        break;
+      }
     case 3:
+      {
+        for (int packet = 0; packet < np; packet++)
+        {
+          readRawMPU(nc);
+          sendData();
+          Serial.println("Dados enviados");
+          //mqtt.loop();
+        }
+        cmd = 0;
+      }
       break;
+    default:
+      Serial.println("Nenhum comando detectado");
   }
 }
 
@@ -203,7 +230,7 @@ void setWifi()
     Serial.print(".");
 
     digitalWrite(D4, LOW); delay(100);
-    digitalWrite(D4, HIGH); delay(900);
+    digitalWrite(D4, HIGH); delay(400);
 
   }
   if ( WiFi.status() != WL_CONNECTED) {
@@ -235,7 +262,7 @@ void setMPU()
     writeMPU(ACCEL_CONFIG, ACCEL_SCALE); // CONFIGURA A ESCALA DO ACELERÔMETRO - +-4G
 
     digitalWrite(D0, LOW); delay(100);
-    digitalWrite(D0, HIGH); delay(500);
+    digitalWrite(D0, HIGH); delay(400);
 
   } while (statusMPU());
 
@@ -291,7 +318,7 @@ void readRawMPU(int iterations)
     if (T >= Ts)
     {
       //Serial.println(capt_counter);
-      Serial.println(T);
+      //Serial.println(T);
       //delay(Ts);
       Tp = Tc;
       yield();
@@ -340,7 +367,7 @@ void setMqtt()
 
   for (uint8_t count = 5; !mqtt.connected() && count > 0; count--) {
     Serial.print(".");
-    mqtt.connect(clientId.c_str(), "cliente", "cliente");
+    mqtt.connect(clientId.c_str(), IO_USERNAME, IO_KEY);
 
     digitalWrite(D4, LOW); delay(100);
     digitalWrite(D4, HIGH);
@@ -351,7 +378,7 @@ void setMqtt()
   } else {
     Serial.println("\n\n======================================");
     Serial.println("Broker MQTT conectado!");
-    Serial.println("Endereço do Broker: ??");
+    Serial.print("Endereço do Broker: "); Serial.println(IO_SERVER);
     Serial.println("======================================\n");
 
     //mqtt.subscribe(topicSCADA_ESP);
@@ -381,15 +408,22 @@ void sendData()
 
 void sendClass()
 {
-  String acc_res = "RMS ACC: ", gyr_res = "RMS GYR: ", class_res = "CLASS: ";
+  char acc_res[80], gyr_res[80], class_res[80];
+  sprintf(acc_res, "{\"name\":\"RMS_ACC\",\"value\":%f,\"timestamp\":%i}", rms_acc, currCaptTime);
+  sprintf(gyr_res, "{\"name\":\"RMS_GYR\",\"value\":%f,\"timestamp\":%i}", rms_gyr, currCaptTime);
+  sprintf(class_res, "{\"name\":\"RESULT_CLASS\",\"value\":%f,\"timestamp\":%i}", result_class, currCaptTime);
 
-  acc_res += rms_acc;
-  gyr_res += rms_gyr;
-  class_res += result_class;
+  /*
+    String class_res = "{\"name\":\"RESULT_CLASS\",\"value\":";
+    class_res += result_class;
+    class_res += txt_timestamp;
+    class_res += "1234";
+    class_res += "}";
+  */
 
-  mqtt.publish(accResultTopic, acc_res.c_str());
-  mqtt.publish(gyrResultTopic, gyr_res.c_str());
-  mqtt.publish(classResultTopic, class_res.c_str());
+  mqtt.publish(accResultTopic, acc_res);
+  mqtt.publish(gyrResultTopic, gyr_res);
+  mqtt.publish(classResultTopic, class_res);
 }
 
 //////////////////////////////////////

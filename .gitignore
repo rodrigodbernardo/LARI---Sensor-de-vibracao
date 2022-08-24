@@ -34,3 +34,4 @@
 # Secure key
 
 *.hpp
+firmware/secure.hpp

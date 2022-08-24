@@ -27,15 +27,16 @@ UM ARQUIVO DE CHAVES NO GOOGLE DRIVE, PARA EVITAR CONFUSÃO
 //char * ssid[]      = {"Mi 9"};
 //char * password[]  = {"12345678ab"};
 
-int network_number = 3;
-char* WLAN_SSID[] = {"Mi 9", "FLAVIO 02","IFCE-LARI"};
-char* WLAN_PASS[] = {"12345678ab", "8861854611","lari112358"};
+int network_number = 1;
+char* WLAN_SSID[] = {"FLAVIO 02","Mi 9","IFCE-LARI"};
+char* WLAN_PASS[] = {"8861854611","12345678ab","lari112358"};
 
 //
 // Chaves relativas à conexão MQTT
 //
 
-#define IO_SERVER      "192.168.207.168"
+//#define IO_SERVER      "192.168.207.168"
+#define IO_SERVER      "10.0.0.16"
 #define IO_SERVERPORT  1883
 #define IO_USERNAME    "cliente"
 #define IO_KEY         "cliente"
