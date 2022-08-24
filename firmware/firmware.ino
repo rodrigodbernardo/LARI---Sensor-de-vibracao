@@ -33,7 +33,7 @@ const uint8_t ACCEL_SCALE   = 8;              // Escala do acelerômetro
 unsigned long long Tp = 0; //prevCheckTime
 unsigned long long Tc; //CurrTime
 unsigned long long T = 0; //Interval
-unsigned long long Ts = 1000000;
+unsigned long long Ts = 5000;
 
 //  VARIÁVEIS DE ESPECIFICAÇÃO
 
@@ -66,7 +66,7 @@ double MSD[nc - (2 * w_border)][6];
 String names[7] = {"AcX:", ",AcY:", ",AcZ:", ",GyX:", ",GyY:", ",GyZ:", ",Tmp:"};
 int cmd;
 String status;
-bool offlineMode = 1;
+bool offlineMode = 0;
 
 //////////////////  CALLBACK MQTT   //////////////////
 
@@ -137,7 +137,10 @@ void loop()
     } else {
       mqtt.loop();
 
-      if (!mqtt.connected())
+      if (mqtt.connected())
+      {
+        mqtt.loop();
+      }else
       {
         Serial.println("\nConexão com o Broker MQTT não estabelecida.");
         setMqtt();
@@ -159,16 +162,27 @@ void loop()
         break;
     }
   */
-  cmd = 1;
+  cmd = 2;
   switch (cmd) {
     case 1:
+    {
       readRawMPU(1);
       printMPU();
       break;
+    }
     case 2:
+    {
       readRawMPU(nc);
       featureExtraction();
       dataClassification();
+
+      if (!offlineMode)
+        sendClass();
+      
+      delay(1000);
+      break;
+    }
+    case 3:
       break;
   }
 }
@@ -277,7 +291,7 @@ void readRawMPU(int iterations)
     if (T >= Ts)
     {
       //Serial.println(capt_counter);
-      //Serial.println(T);
+      Serial.println(T);
       //delay(Ts);
       Tp = Tc;
       yield();
